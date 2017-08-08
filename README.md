@@ -3,6 +3,7 @@
 ## Purpose
 The goal of this project was to complete the OpenDoor Software Engineer challenge given to each applicant. The given code was completed in 2 hours.  
 
+## Solution
 Ontop of solving the original problem, I was able to implement middleware to restrict api access to only users with valid api keys. The API keys used were pseudokeys generated using bcrypt. Users would have to register, then request thier key from the `retrieve_key` endpoint.  
   
 Although these pseudokeys never actually expired, I've implemented a `refresh_token` route which will delete the old api key, making it no longer usable, and send the user a new api key. When making the request to any endpoint besides `/register` and `/retrieve_key`, the apikey **must** appear in the `api_key` header of the request, otherwise it will restrict access.  
