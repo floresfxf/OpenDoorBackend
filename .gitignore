@@ -5,3 +5,4 @@ public/bundle.js
 env.sh
 .babelrc
 .eslintrc
+config.js

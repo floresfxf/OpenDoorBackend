@@ -2,19 +2,113 @@ var express = require('express');
 var app = express();
 var axios = require('axios');
 const csv=require('csvtojson')
-var fs = require('fs')
+var mongoose = require('mongoose')
 
+var User   = require('./models/User'); // get our mongoose model
 
+var bcrypt = require('bcrypt');
+const saltRounds = 10;
 
 var bodyParser = require('body-parser');
 app.use(bodyParser.urlencoded({extended: false}));
 app.use(bodyParser.json());
 
+let csv_data;
+mongoose.connect(process.env.MONGODB_URI);
 
 
 
-app.get('/listings', function(req,res){ //For user Registration
-  console.log(req.query);
+app.post('/retrieve_key', function(req, res) {
+  const username = req.body.username;
+  User.findOne({
+    username: username,
+  }, function(err, user) {
+    if (!user){
+      res.json({success:false, error:'No user exists'})
+    }else{
+      bcrypt.compare(req.body.password, user.password, function(err, response) {
+        if (response === true){
+          res.json({success: true, api_key: user.api_key})
+        }else{
+          res.json({success: false, error:'Incorrect Password'})
+        }
+      });
+    }
+  });
+});
+
+app.post('/register', function(req, res) {
+  const username = req.body.username;
+  bcrypt.hash(req.body.password, saltRounds, function(err, hash) {
+    const api_key = username + hash;
+    bcrypt.hash(api_key, saltRounds, function(err, hashed) {
+      var newUser = new User({
+        username: username,
+        password: hash,
+        api_key: hashed,
+      });
+
+      newUser.save(function(err) {
+        if (err) throw err;
+        console.log('User saved successfully');
+        res.json({ success: true });
+      });
+    });
+  });
+});
+
+
+app.use(function(req, res, next) {
+  // check header or url parameters or post parameters for token
+  var token = req.headers['api_key'];
+  // decode token
+  if (token) {
+    User.findOne({
+      api_key: token,
+    }, function(err, user) {
+      if (err) return res.send(500, { error: err });
+      if (!user){
+        res.json({success:false, error:'Non-existant key'})
+      }else{
+        next();
+      }
+    })
+  } else {
+    // if there is no token
+    // return an error
+    return res.status(403).send({
+        success: false,
+        message: 'No api key provided.'
+    });
+
+  }
+});
+app.get('/refresh_key', function(req, res) {
+  const new_api_key = Date.now().toString();
+  console.log(new_api_key);
+  bcrypt.hash(new_api_key, saltRounds, function(err, hash) {
+    User.findOneAndUpdate({api_key: req.headers['api_key']}, {api_key:hash}, {new: true},function(err, user) {
+      if (err) return res.send(500, { error: err });
+
+      if (!user) {
+        res.json({ success: false, message: 'Authentication failed. Token not found.' });
+      } else if (user) {
+
+        // return the information including token as JSON
+        console.log(user);
+        res.json({
+          success: true,
+          new_api_key: user.api_key,
+        });
+
+      }
+    });
+  })
+});
+
+
+
+app.get('/listings', function(req,res){
   const min_price = req.query.min_price || 0;
   const max_price = req.query.max_price || Infinity;
   const min_bed = req.query.min_bed || 0;
@@ -22,13 +116,10 @@ app.get('/listings', function(req,res){ //For user Registration
   const min_bath = req.query.min_bath || 0;
   const max_bath = req.query.max_bath || Infinity;
 
-
   const returnJSON ={ "type": "FeatureCollection", "features": [] }
 
-  axios.get('https://s3.amazonaws.com/opendoor-problems/listing-details.csv')
-  .then(function (response) {
-    csv()
-  .fromString(response.data)
+  csv()
+  .fromString(csv_data)
   .on('csv',(csvRow)=>{
       const id = csvRow[0];
       const street = csvRow[1];
@@ -56,89 +147,25 @@ app.get('/listings', function(req,res){ //For user Registration
       }
   })
   .on('done',(error)=>{
-    res.status(200).json(returnJSON)
-  })
+    if (error){
+      console.log("There was an error: ", error);
+      res.status(500).json(error);
+    }else{
+      console.log("Object pulled and parsed successfully")
+      res.status(200).json(returnJSON);
+    }
   })
 
-  .catch(function (error) {
-    console.log("ERROR", error);
-  });
 });
 
-// app.post('/users/register', function(req,res){ //For user Registration
-//   var newUser = new User({
-//     username:req.body.username,
-//     password:req.body.password
-//   });
-//   newUser.save(function(err){
-//     if (err){
-//       res.status(400).json({error:err});
-//     }
-//     else{
-//       res.status(200).json({success:true});
-//     }
-//   });
-// });
-//
-// app.post('/users/login', function(req,res){ //Checking to see if user is logged in
-//   User.findOne({username:req.body.username},function(err,obj){
-//     if (err || !obj){
-//       res.status(400).json({error:err});
-//     }else{
-//       if (req.body.password  === obj.password){
-//         res.status(200).json({success:true});
-//       }else{
-//         res.status(401).json({error:"Incorrect Password"});
-//       }
-//     }
-//   });
-// });
-//
-//
-//
-//
-// app.post('/designs/voteup/:designId', function(req,res){ //upvote a design
-//   //SEND THE USERNAME INSIDE THE BODY OF THE REQUEST SO THAT YOU CAN UPDATE THE USERS OVERALL rating
-//   // req.body.usernamedesignerRating
-//
-//   Design.findOne({_id:req.params.designId},function(err,design){
-//     if(err){
-//       res.status(400).json({error:err});
-//     } else {
-//       if (design){
-//         design.rating = design.rating + 1;
-//         design.save(function(err){
-//           if (err){
-//             res.status(400).json({error:err});
-//           }
-//           else{
-//             res.status(200).json({success:true, rating: design.rating});
-//           }
-//         });
-//       }
-//     }
-//   });
-// });
-//
-// app.post('/designs/votedown/:designId', function(req,res){ //downvote a design
-//   Design.findOne({_id:req.params.designId},function(err,design){
-//     if (design){
-//       design.rating = design.rating - 1;
-//       design.save(function(err){
-//         if (err){
-//           res.status(400).json({error:err});
-//         }
-//         else{
-//           res.status(200).json({success:true, rating: design.rating});
-//         }
-//       });
-//     }else{
-//       res.status(400).json({error:err});
-//     }
-//   });
-// });
+
 
 var port = process.env.PORT || 3000;
 app.listen(port, function() {
-  console.log('Express started, listening to port: ', port);
+  axios.get('https://s3.amazonaws.com/opendoor-problems/listing-details.csv')
+  .then(function (response) {
+    csv_data = response.data;
+    console.log('Express started, listening to port: ', port);
+  })
+  .catch((err)=>console.log("There was an error: ", err))
 });
